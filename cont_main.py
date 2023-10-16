@@ -149,6 +149,7 @@ def analyze_eth_packet(number, pckt, filter_flag):
                     elif eth_packet['protocol'] == 'UDP' and filter_flag:
                         if eth_packet['app_protocol'] == "TFTP":
                             eth_packet['opcode'] = int(''.join(f'{byte:02x}' for byte in pc.__bytes__()[42:44]), 16)
+                            eth_packet['len'] = int(''.join(f'{byte:02x}' for byte in pc.__bytes__()[38:40]), 16)
                         
                 if eth_packet['protocol'] == "ICMP":
 
@@ -232,6 +233,8 @@ def filter_switch(frames ,arg):
         try:
             if frame['frame_type'] == "ETHERNET II" and frame['protocol'] == "UDP":
 
+             
+                filtered_frames.append(frame)
                 if arg in frame['app_protocol']:
                     filtered_frames.append(frame)
         except TypeError:
@@ -278,38 +281,54 @@ def track_connections(frames):
         "incomplete": incomplete_connections
     }
 
+# def filter_tftp_connection(frames):
+#     pass
 
-# def get_connection_key(frame: Dict) -> str:
-#     src = (frame['src_ip'], frame.get('src_port'))
-#     dst = (frame['dst_ip'], frame.get('dst_port'))
-#     # Convert tuples to strings and sort to ensure consistency
-#     key_parts = sorted([str(src), str(dst)])
-#     return '|'.join(key_parts)
+def process_tftp_frames(frames):
+    complete_comms = []
+    partial_comms = []
+    processed_frames = set()
+    ongoing_comm = None  # Store ongoing communication details
 
-# def filter_tftp_communication(data):
-#     ongoing_tftp_connections = set()
-#     tftp_communications = {}
+    for frame in frames:
+        if frame["protocol"] == "TFTP":
+            # Start a new communication when we see a TFTP packet
+            ongoing_comm = {
+                "number_comm": len(complete_comms) + 1,
+                'src_comm': frame['src_ip'],
+                "dst_comm": frame['dst_ip'],
+                "packets": [frame]
+            }
+            processed_frames.add(frame["frame_number"])
+        elif ongoing_comm and frame["protocol"] == "UDP":
+            # If there's an ongoing communication, add the UDP packet to it
+            ongoing_comm["packets"].append(frame)
+            processed_frames.add(frame["frame_number"])
+            # For the sake of this example, we'll assume a communication is "complete" when we see a smaller length UDP packet
+            if frame["len"] < 100:  # You might want to adjust this threshold
+                complete_comms.append(ongoing_comm)
+                ongoing_comm = None  # Reset for next communication
+        else:
+            # Handle any unprocessed frames as partial communications
+            partial_comms.append({
+                "number_comm": len(partial_comms) + 1,
+                'src_comm': frame['src_ip'],
+                "dst_comm": frame['dst_ip'],
+                "packets": [frame]
+            })
+            processed_frames.add(frame["frame_number"])
 
-#     for frame in data:
-#         connection_key = get_connection_key(frame)
+    # Add any remaining unprocessed frames as partial communications
+    for frame in frames:
+        if frame["frame_number"] not in processed_frames:
+            partial_comms.append({
+                "number_comm": len(partial_comms) + 1,
+                'src_comm': frame['src_ip'],
+                "dst_comm": frame['dst_ip'],
+                "packets": [frame]
+            })
 
-#         # If the frame is an initialization or belongs to an ongoing communication, process it
-#         if frame.get('app_protocol') == 'TFTP' or connection_key in ongoing_tftp_connections:
-#             if connection_key not in tftp_communications:
-#                 tftp_communications[connection_key] = []
-
-#             tftp_communications[connection_key].append(frame)
-
-#             # If it's an initialization, mark this communication as ongoing
-#             if frame.get('app_protocol') == 'TFTP':
-#                 ongoing_tftp_connections.add(connection_key)
-
-#     # Collate results
-#     result = list(tftp_communications.values())
-#     return result
-
-def filter_tftp_connection(frames):
-    pass
+    return {"complete_comms": complete_comms, "partial_comms": partial_comms}
 
 def filter_icmp_connection(frames):
     filter_frames = []
@@ -642,8 +661,15 @@ if __name__ == '__main__':
                         "partial_comms": first_incomplete,
                     }, fsf)
             elif pcap_data_filtered[0]['protocol'] == "UDP":
-                print(pcap_data_filtered)
-
+                packets = process_tftp_frames(pcap_data)
+                with open("output_cont_2.yaml", "w") as fsf:
+                    yaml.dump({
+                        "name":'PKS2023/24',
+                        "pcap_name": filename ,
+                        "filter_name": argument,
+                        "complete_comms":packets['complete_comms'],
+                        "partial_comms": packets['partial_comms']
+                    }, fsf)
             
     else:
         stats = ip_statistic(pcap_data)
