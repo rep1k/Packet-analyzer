@@ -4,6 +4,8 @@ import sys, os
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
 
+#! Nastavenie vstupu Pcap suboru
+filename = "./eth-9.pcap"
 
 #? DICT for CONSTANTS
 ETHER_TYPES = {}
@@ -151,7 +153,7 @@ def analyze_eth_packet(number, pckt, filter_flag):
                         eth_packet['opcode'] = int(''.join(f'{byte:02x}' for byte in pc.__bytes__()[42:44]), 16)
                         if eth_packet['app_protocol'] == "TFTP":
                             eth_packet['len'] = int(''.join(f'{byte:02x}' for byte in pc.__bytes__()[38:40]), 16)
-                        
+                    if eth_packet['app_protocol'] is None or eth_packet['app_protocol'] == "": del eth_packet["app_protocol"]
                 if eth_packet['protocol'] == "ICMP":
 
                     eth_packet['icmp_type'] = ICMP_TYPES.get(str(int(''.join(f'{byte:02x}' for byte in pc.__bytes__()[34:35]), 16)))
@@ -193,7 +195,8 @@ def analyze_eth_packet(number, pckt, filter_flag):
                     eth_packet['dst_mac'] = get_dst_mac(pc)
                     eth_packet['sap'] = get_sap(pc)
                     eth_packet['hexa_frame'] = format_for_yaml(str(pc.__bytes__().hex()))
-                    
+            
+            # if eth_packet['']
         return eth_packet
 
 def analyze_pcap(data, filter_flag):
@@ -238,6 +241,8 @@ def filter_switch(frames ,arg):
                     filtered_frames.append(frame)
         except TypeError:
             continue
+        except KeyError:
+            continue
     
     return filtered_frames
 
@@ -265,7 +270,7 @@ def track_connections(frames):
         src_ip, src_port = frame['src_ip'], frame['src_port']
         dst_ip, dst_port = frame['dst_ip'], frame['dst_port']
         
-        # Use frozenset to make the key order-agnostic
+        # Use frozenset to make the key order
         connection_key = frozenset(((src_ip, src_port), (dst_ip, dst_port)))
 
         # If the flag is 'SYN' (or 'SYN-ACK' for bidirectional SYN) and this connection doesn't exist, initialize it
@@ -284,7 +289,7 @@ def track_connections(frames):
             if connection_key in ongoing_connections:
                 completed_connections.append(ongoing_connections.pop(connection_key))
     
-    # At the end, all remaining connections in ongoing_connections can be considered as incomplete/ongoing
+    # At the end, all remaining connections in ongoing_connections can be considered as incomplete
     incomplete_connections = list(ongoing_connections.values())
 
    
@@ -342,9 +347,7 @@ def categorize_tftp_frames(frames):
         
         buffer_frames.append(frame)
 
-        # If we find a new Write/Read Request (opcode 1 or 2) and our buffer already has frames,
-        # it means we've encountered the start of a new communication.
-        # We need to check the last frames in the buffer to determine if it's a complete or partial communication.
+        # If we find a new Write/Read Request (opcode 1 or 2) and our buffer already has frames
         if opcode in [1, 2] and len(buffer_frames) > 1:
             last_frame = buffer_frames[-2]  # getting the second last frame
             if last_frame.get('opcode', 0) == 3 and last_frame.get('len', 0) < 512:
@@ -380,7 +383,7 @@ def categorize_tftp_frames(frames):
                 "dst_comm": last_frame['dst_ip'],
                 "packets": buffer_frames
             })
-
+    
     return complete_comms, partial_comms
 
 def filter_icmp_connection(frames):
@@ -582,11 +585,9 @@ def find_keys_with_max_values(d):
 
 if __name__ == '__main__':
     print("STARTING")
-    filename = "./trace-25.pcap"
-    print(os.getcwdb())
-    
+
     ch_filename = filename.replace(".pcap", "").replace("./", "")
-    print(ch_filename)
+
     switch_flag = False
     argument = ""
     yaml = YAML()
@@ -762,7 +763,7 @@ if __name__ == '__main__':
                         "name":'PKS2023/24',
                         "pcap_name": filename ,
                         "filter_name": argument,
-                        "comms": completed_coms,
+                        "complete_comms": completed_coms,
                         
                     }, fsf)
             
