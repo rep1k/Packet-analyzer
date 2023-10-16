@@ -147,7 +147,8 @@ def analyze_eth_packet(number, pckt, filter_flag):
                     if eth_packet['protocol'] == 'TCP' and filter_flag:
                         eth_packet['flags'] = get_flags(pc)
                     elif eth_packet['protocol'] == 'UDP' and filter_flag:
-                        pass
+                        if eth_packet['app_protocol'] == "TFTP":
+                            eth_packet['opcode'] = int(''.join(f'{byte:02x}' for byte in pc.__bytes__()[42:44]), 16)
                         
                 if eth_packet['protocol'] == "ICMP":
 
@@ -314,11 +315,6 @@ def filter_icmp_connection(frames):
     filter_frames = []
     for frame in frames:
             
-        # src_ip, src_port = frame['src_ip'], frame['src_port']
-        # dst_ip, dst_port = frame['dst_ip'], frame['dst_port']
-        
-        # # Use frozenset to make the key order-agnostic
-        # connection_key = frozenset(((src_ip, src_port), (dst_ip, dst_port)))
         try:
             if frame['frame_type'] == "ETHERNET II" and frame['protocol'] == "ICMP":
                 
@@ -514,7 +510,7 @@ def find_keys_with_max_values(d):
 
 if __name__ == '__main__':
     print("STARTING")
-    filename = './Vzor/test_pcap_files/vzorky_pcap_na_analyzu/eth-8.pcap'
+    filename = './Vzor/test_pcap_files/vzorky_pcap_na_analyzu/eth-9.pcap'
     
     switch_flag = False
     argument = ""
@@ -646,7 +642,7 @@ if __name__ == '__main__':
                         "partial_comms": first_incomplete,
                     }, fsf)
             elif pcap_data_filtered[0]['protocol'] == "UDP":
-                print("UDP")
+                print(pcap_data_filtered)
 
             
     else:
