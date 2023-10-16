@@ -1,6 +1,6 @@
 import scapy.all as scapy
 import json
-import sys
+import sys, os
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
 
@@ -236,8 +236,6 @@ def filter_switch(frames ,arg):
 
                 if arg in frame['app_protocol']:
                     filtered_frames.append(frame)
-                elif is_tftp_related(frame):
-                    filtered_frames.append(frame)
         except TypeError:
             continue
     
@@ -332,10 +330,7 @@ def is_tftp_complete(frames):
     
     # If loop finishes without returning, then it's partial
     return False
-
-def process_tftp_frames(frames):
-    pass
-        
+ 
 def categorize_tftp_frames(frames):
     complete_comms = []
     partial_comms = []
@@ -587,8 +582,11 @@ def find_keys_with_max_values(d):
 
 if __name__ == '__main__':
     print("STARTING")
-    filename = './Vzor/test_pcap_files/vzorky_pcap_na_analyzu/trace-26.pcap'
+    filename = "./trace-25.pcap"
+    print(os.getcwdb())
     
+    ch_filename = filename.replace(".pcap", "").replace("./", "")
+    print(ch_filename)
     switch_flag = False
     argument = ""
     yaml = YAML()
@@ -646,7 +644,7 @@ if __name__ == '__main__':
             if not dict_data["complete_comms"]:
                 del dict_data["complete_comms"]
             
-            with open("output_cont_2.yaml", "w") as fsf:
+            with open(f"{ch_filename}.yaml", "w") as fsf:
                     yaml.dump(dict_data, fsf)
             fsf.close()
             
@@ -669,7 +667,7 @@ if __name__ == '__main__':
             if not dict_data["complete_comms"]:
                 del dict_data["complete_comms"]
                 
-            with open("output_cont_2.yaml", "w") as fsf:
+            with open(f"./yaml_output/{ch_filename}.yaml", "w") as fsf:
                     yaml.dump(dict_data, fsf)
         else:
             print(argument)
@@ -749,7 +747,7 @@ if __name__ == '__main__':
                 if not dict_data["complete_comms"]:
                     del dict_data["complete_comms"]
                     
-                with open("output_cont_2.yaml", "w") as fsf:
+                with open(f"./yaml_output/{ch_filename}.yaml", "w") as fsf:
                     yaml.dump(dict_data, fsf)
             if len(pcap_data_filtered) == 0:
                 print(f"{argument} sa nenasiel v PCAP")
@@ -759,7 +757,7 @@ if __name__ == '__main__':
 
                 completed_coms, partial_comms = categorize_tftp_frames(pcap_data_filtered)
                 
-                with open("output_cont_2.yaml", "w") as fsf:
+                with open(f"./yaml_output/{ch_filename}.yaml", "w") as fsf:
                     yaml.dump({
                         "name":'PKS2023/24',
                         "pcap_name": filename ,
@@ -774,7 +772,7 @@ if __name__ == '__main__':
         max_send_packets_by = find_keys_with_max_values(stats)
     
     
-        with open('output_cont.yaml', 'w') as f:
+        with open(f"./yaml_output/{ch_filename}.yaml", 'w') as f:
             yaml.dump(
                 {"name":'PKS2023/24',
                 "pcap_name": filename ,
