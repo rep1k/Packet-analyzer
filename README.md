@@ -1,1 +1,2 @@
 # Packet-analyzer
+Tento projekt sa zameriava na analýzu sieťovej komunikácie na rôznych vrstvách. Rieši sa rozdeľovanie komunikácie medzi ukončené a neukončené, filtrovanie podľa zadaného parametru, celková analýza hexdumpu z pcap súboru.
