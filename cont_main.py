@@ -13,6 +13,7 @@ IEEE_PID = {}
 PORTS = {}
 COMMS = {}
 ICMP_TYPES = {}
+OPCODES = {1,2,3,4,5}
 
 try:
     with open('./constants.txt', 'r') as f:
@@ -147,8 +148,8 @@ def analyze_eth_packet(number, pckt, filter_flag):
                     if eth_packet['protocol'] == 'TCP' and filter_flag:
                         eth_packet['flags'] = get_flags(pc)
                     elif eth_packet['protocol'] == 'UDP' and filter_flag:
+                        eth_packet['opcode'] = int(''.join(f'{byte:02x}' for byte in pc.__bytes__()[42:44]), 16)
                         if eth_packet['app_protocol'] == "TFTP":
-                            eth_packet['opcode'] = int(''.join(f'{byte:02x}' for byte in pc.__bytes__()[42:44]), 16)
                             eth_packet['len'] = int(''.join(f'{byte:02x}' for byte in pc.__bytes__()[38:40]), 16)
                         
                 if eth_packet['protocol'] == "ICMP":
@@ -226,22 +227,36 @@ def filter_switch(frames ,arg):
                 if arg in frame['app_protocol']:
                     filtered_frames.append(frame)
         except TypeError:
-            print("None")
+            # print("None")
             continue
         except KeyError:
             continue
         try:
             if frame['frame_type'] == "ETHERNET II" and frame['protocol'] == "UDP":
 
-             
-                filtered_frames.append(frame)
                 if arg in frame['app_protocol']:
+                    filtered_frames.append(frame)
+                elif is_tftp_related(frame):
                     filtered_frames.append(frame)
         except TypeError:
             continue
     
     return filtered_frames
 
+def filter_tftp_switch(frames, arg):
+    filtered_frames = []
+    for frame in frames:
+        try:
+            
+            if 'protocol' in frame and frame['protocol'] == "UDP":
+
+                if is_tftp_related(frame) or arg in frame['app_protocol']:
+                    # if 'opcode' in frame: print(frame['frame_number'], frame['opcode'], is_tftp_related(frame))
+                    filtered_frames.append(frame)
+        except TypeError:
+            continue
+    
+    return filtered_frames
 
 def track_connections(frames):
     ongoing_connections = {}  # Key: (src_ip, src_port, dst_ip, dst_port), Value: List of associated frames
@@ -281,54 +296,97 @@ def track_connections(frames):
         "incomplete": incomplete_connections
     }
 
-# def filter_tftp_connection(frames):
-#     pass
+def is_tftp_related(frame):
+    tftp_opcodes = {1, 2, 3, 4, 5}
+    
+    # If frame has an opcode and it's one of the TFTP opcodes
+    if "opcode" in frame and frame["opcode"] in tftp_opcodes:
+        return True
+
+    return False
+
+def is_tftp_complete(frames):
+    last_data_length = None
+    for frame in frames:
+        opcode = frame.get('opcode', None)
+        
+        # Checking for write request
+        if opcode == 2:
+            continue
+        
+        # Checking for data opcode
+        if opcode == 3:
+            # Capture the data length
+            last_data_length = frame.get('len', 0)
+            continue
+        
+        # Checking for acknowledgment opcode
+        if opcode == 4:
+            # If last data length is not set or it's less than 512
+            # then the communication can be assumed as complete
+            if last_data_length is None or last_data_length < 512:
+                return True
+            
+            # Resetting last data length for next loop iteration
+            last_data_length = None
+    
+    # If loop finishes without returning, then it's partial
+    return False
 
 def process_tftp_frames(frames):
+    pass
+        
+def categorize_tftp_frames(frames):
     complete_comms = []
     partial_comms = []
-    processed_frames = set()
-    ongoing_comm = None  # Store ongoing communication details
+    
+    buffer_frames = []  # Temporarily store frames for a potential communication
 
     for frame in frames:
-        if frame["protocol"] == "TFTP":
-            # Start a new communication when we see a TFTP packet
-            ongoing_comm = {
+        opcode = frame.get('opcode', None)
+        
+        buffer_frames.append(frame)
+
+        # If we find a new Write/Read Request (opcode 1 or 2) and our buffer already has frames,
+        # it means we've encountered the start of a new communication.
+        # We need to check the last frames in the buffer to determine if it's a complete or partial communication.
+        if opcode in [1, 2] and len(buffer_frames) > 1:
+            last_frame = buffer_frames[-2]  # getting the second last frame
+            if last_frame.get('opcode', 0) == 3 and last_frame.get('len', 0) < 512:
+                complete_comms.append({
+                    "number_comm": len(complete_comms) + 1,
+                    'src_comm': last_frame['src_ip'],
+                    "dst_comm": last_frame['dst_ip'],
+                    "packets": buffer_frames[:-1]
+                })
+            else:
+                partial_comms.append({
+                    "number_comm": len(partial_comms) + 1,
+                    'src_comm': last_frame['src_ip'],
+                    "dst_comm": last_frame['dst_ip'],
+                    "packets": buffer_frames[:-1]
+                })
+            buffer_frames = [frame]  # reset buffer with current frame
+
+    # Check remaining frames in buffer after processing all frames
+    if buffer_frames:
+        last_frame = buffer_frames[-1]
+        if last_frame.get('opcode', 0) == 3 and last_frame.get('len', 0) < 512:
+            complete_comms.append({
                 "number_comm": len(complete_comms) + 1,
-                'src_comm': frame['src_ip'],
-                "dst_comm": frame['dst_ip'],
-                "packets": [frame]
-            }
-            processed_frames.add(frame["frame_number"])
-        elif ongoing_comm and frame["protocol"] == "UDP":
-            # If there's an ongoing communication, add the UDP packet to it
-            ongoing_comm["packets"].append(frame)
-            processed_frames.add(frame["frame_number"])
-            # For the sake of this example, we'll assume a communication is "complete" when we see a smaller length UDP packet
-            if frame["len"] < 100:  # You might want to adjust this threshold
-                complete_comms.append(ongoing_comm)
-                ongoing_comm = None  # Reset for next communication
+                'src_comm': last_frame['src_ip'],
+                "dst_comm": last_frame['dst_ip'],
+                "packets": buffer_frames
+            })
         else:
-            # Handle any unprocessed frames as partial communications
             partial_comms.append({
                 "number_comm": len(partial_comms) + 1,
-                'src_comm': frame['src_ip'],
-                "dst_comm": frame['dst_ip'],
-                "packets": [frame]
-            })
-            processed_frames.add(frame["frame_number"])
-
-    # Add any remaining unprocessed frames as partial communications
-    for frame in frames:
-        if frame["frame_number"] not in processed_frames:
-            partial_comms.append({
-                "number_comm": len(partial_comms) + 1,
-                'src_comm': frame['src_ip'],
-                "dst_comm": frame['dst_ip'],
-                "packets": [frame]
+                'src_comm': last_frame['src_ip'],
+                "dst_comm": last_frame['dst_ip'],
+                "packets": buffer_frames
             })
 
-    return {"complete_comms": complete_comms, "partial_comms": partial_comms}
+    return complete_comms, partial_comms
 
 def filter_icmp_connection(frames):
     filter_frames = []
@@ -529,7 +587,7 @@ def find_keys_with_max_values(d):
 
 if __name__ == '__main__':
     print("STARTING")
-    filename = './Vzor/test_pcap_files/vzorky_pcap_na_analyzu/eth-9.pcap'
+    filename = './Vzor/test_pcap_files/vzorky_pcap_na_analyzu/trace-26.pcap'
     
     switch_flag = False
     argument = ""
@@ -565,36 +623,61 @@ if __name__ == '__main__':
     pcap_data = analyze_pcap(filename, switch_flag)
     if switch_flag:
         if argument == "ARP":
-            print("ARPPp")
+            # print("ARPPp")
             packets = filter_arp_connection(pcap_data)
+            if len(packets) == 0:
+                print(f"{argument} sa nenasiel v PCAP")
+                sys.exit(1)
             packets = process_arp_frames(packets)
-            print("completed", packets['complete_comms'])
-            print("Partial", packets['partial_comms'])
-            with open("output_cont_2.yaml", "w") as fsf:
-                    yaml.dump({
-                        "name":'PKS2023/24',
+            # print("completed", packets['complete_comms'])
+            # print("Partial", packets['partial_comms'])
+            
+            dict_data = {
+                       "name":'PKS2023/24',
                         "pcap_name": filename ,
                         "filter_name": argument,
-                        "complete_comms": packets['complete_comms'],
+                        "complete_comms": packets['complete_comms'], #TODO FIX THE FORMATTING AS IN THE EXAMPLE ON GIT
                         "partial_comms": packets['partial_comms']
-                    }, fsf)
+                    
+                }
+                
+            if not dict_data["partial_comms"]:
+                del dict_data["partial_comms"]
+            if not dict_data["complete_comms"]:
+                del dict_data["complete_comms"]
+            
+            with open("output_cont_2.yaml", "w") as fsf:
+                    yaml.dump(dict_data, fsf)
+            fsf.close()
+            
         elif argument == "ICMP":
             packets = filter_icmp_connection(pcap_data)
 
             packets = process_icmp_frames(packets)
-            with open("output_cont_2.yaml", "w") as fsf:
-                    yaml.dump({
-                        "name":'PKS2023/24',
+            
+            dict_data = {
+                       "name":'PKS2023/24',
                         "pcap_name": filename ,
                         "filter_name": argument,
-                        "complete_comms":packets['complete_comms'],
+                        "complete_comms": packets['complete_comms'], #TODO FIX THE FORMATTING AS IN THE EXAMPLE ON GIT
                         "partial_comms": packets['partial_comms']
-                    }, fsf)
+                    
+                }
+                
+            if not dict_data["partial_comms"]:
+                del dict_data["partial_comms"]
+            if not dict_data["complete_comms"]:
+                del dict_data["complete_comms"]
+                
+            with open("output_cont_2.yaml", "w") as fsf:
+                    yaml.dump(dict_data, fsf)
         else:
             print(argument)
             pcap_data_filtered = filter_switch(pcap_data, argument)
-            
-            if pcap_data_filtered[0]['protocol'] == "TCP":
+            if len(pcap_data_filtered) == 0:
+                print(f"{argument} sa nenasiel v PCAP")
+
+            if len(pcap_data_filtered) != 0 and pcap_data_filtered[0]['protocol'] == "TCP":
                 # print("TCP")
                 all_completed_coms = []
                 all_incompleted_coms = []
@@ -652,23 +735,37 @@ if __name__ == '__main__':
                     idx_comms += 1
                     all_completed_coms.append(com_coms)
             
-                with open("output_cont_2.yaml", "w") as fsf:
-                    yaml.dump({
+                dict_data = {
                         "name":'PKS2023/24',
                         "pcap_name": filename ,
                         "filter_name": argument,
                         "complete_comms": all_completed_coms,
                         "partial_comms": first_incomplete,
-                    }, fsf)
-            elif pcap_data_filtered[0]['protocol'] == "UDP":
-                packets = process_tftp_frames(pcap_data)
+                    
+                }
+                
+                if not dict_data["partial_comms"]:
+                    del dict_data["partial_comms"]
+                if not dict_data["complete_comms"]:
+                    del dict_data["complete_comms"]
+                    
+                with open("output_cont_2.yaml", "w") as fsf:
+                    yaml.dump(dict_data, fsf)
+            if len(pcap_data_filtered) == 0:
+                print(f"{argument} sa nenasiel v PCAP")
+                
+            elif len(pcap_data_filtered) != 0 and pcap_data_filtered[0]['protocol'] == "UDP":
+                pcap_data_filtered = filter_tftp_switch(pcap_data, argument)
+
+                completed_coms, partial_comms = categorize_tftp_frames(pcap_data_filtered)
+                
                 with open("output_cont_2.yaml", "w") as fsf:
                     yaml.dump({
                         "name":'PKS2023/24',
                         "pcap_name": filename ,
                         "filter_name": argument,
-                        "complete_comms":packets['complete_comms'],
-                        "partial_comms": packets['partial_comms']
+                        "comms": completed_coms,
+                        
                     }, fsf)
             
     else:
